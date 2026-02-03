@@ -11,29 +11,44 @@ interface DomainStat {
   percentage: number;
   correct: number;
   total: number;
+  id: string; // Para ordenamiento interno si fuera necesario
 }
 
 const DomainResults: React.FC<DomainResultsProps> = ({ history }) => {
-  // 1. Lógica de Cálculo (JS)
+  
+  // 1. Lógica de Agrupación y Normalización
+  const normalizeDomain = (rawName: string): string => {
+    const lower = rawName.toLowerCase();
+    
+    // Detectamos el patrón base "Dominio X"
+    if (lower.includes('dominio 1')) return 'Dominio 1: Principios Filosóficos y Legales';
+    if (lower.includes('dominio 2')) return 'Dominio 2: Ambientes Favorables y Diversidad';
+    if (lower.includes('dominio 3')) return 'Dominio 3: Práctica Educativa y Pedagógica';
+    if (lower.includes('dominio 4')) return 'Dominio 4: Gestión Escolar y Vinculación';
+    
+    return 'Otros Conceptos'; // Fallback para preguntas sin dominio claro
+  };
+
   const calculateDomainStats = (): DomainStat[] => {
     const domains: Record<string, { total: number; correct: number }> = {};
 
     history.forEach(attempt => {
-      // Normalizamos el nombre del dominio para evitar duplicados por espacios extra
-      const dom = attempt.question.dominio.trim();
+      // Usamos el nombre normalizado como clave para agrupar
+      const standardizedName = normalizeDomain(attempt.question.dominio);
       
-      if (!domains[dom]) {
-        domains[dom] = { total: 0, correct: 0 };
+      if (!domains[standardizedName]) {
+        domains[standardizedName] = { total: 0, correct: 0 };
       }
       
-      domains[dom].total += 1;
+      domains[standardizedName].total += 1;
       if (attempt.isCorrect) {
-        domains[dom].correct += 1;
+        domains[standardizedName].correct += 1;
       }
     });
 
     return Object.entries(domains).map(([name, stats]) => ({
       name,
+      id: name.split(':')[0], // Extraemos "Dominio X" para referencias
       percentage: Math.round((stats.correct / stats.total) * 100),
       correct: stats.correct,
       total: stats.total
@@ -59,19 +74,25 @@ const DomainResults: React.FC<DomainResultsProps> = ({ history }) => {
 
   // 2. Visualización (HTML/CSS)
   return (
-    <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+    <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200 fade-in">
       <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b border-slate-100 pb-4">
         <BarChart2 className="text-brand-guinda" size={20} />
-        Resultados por Dominio
+        Resultados Consolidados por Dominio
       </h3>
       
       <div className="space-y-6">
         {stats.map((domain) => (
           <div key={domain.name} className="group">
             <div className="flex justify-between items-end mb-2">
-              <span className="font-medium text-slate-700 text-sm w-3/4 leading-tight">
-                {domain.name}
-              </span>
+              <div className="flex flex-col w-3/4">
+                <span className="font-bold text-slate-700 text-sm">
+                   {domain.name.split(':')[0]} 
+                </span>
+                <span className="text-xs text-slate-500 truncate">
+                   {domain.name.split(':')[1] || ''}
+                </span>
+              </div>
+              
               <div className="text-right">
                 <span className={`text-lg font-bold ${
                   domain.percentage >= 80 ? 'text-green-700' : 
@@ -86,7 +107,7 @@ const DomainResults: React.FC<DomainResultsProps> = ({ history }) => {
             </div>
             
             {/* Barra de Progreso Visual (Fondo Gris) */}
-            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner">
               {/* Barra de Color Dinámico */}
               <div 
                 className={`h-full rounded-full transition-all duration-1000 ease-out ${getProgressBarColor(domain.percentage)}`} 
