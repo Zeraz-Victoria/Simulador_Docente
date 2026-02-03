@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import QuizCard from './components/QuizCard';
+import DomainResults from './components/DomainResults';
 import { GameState, ScoreState, Question, Attempt } from './types';
 import { MOCK_DATA } from './constants';
-import { BookOpen, RefreshCw, School, GraduationCap, Star, BarChart2, AlertTriangle, CheckCircle, Repeat } from 'lucide-react';
+import { BookOpen, RefreshCw, School, GraduationCap, Star, AlertTriangle, CheckCircle, Repeat } from 'lucide-react';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>('start');
@@ -128,24 +129,6 @@ const App: React.FC = () => {
 
   // --- ANALYTICS HELPERS ---
 
-  const getDomainBreakdown = () => {
-    const domains: Record<string, { total: number; correct: number }> = {};
-    
-    score.history.forEach(attempt => {
-      const dom = attempt.question.dominio;
-      if (!domains[dom]) domains[dom] = { total: 0, correct: 0 };
-      
-      domains[dom].total += 1;
-      if (attempt.isCorrect) domains[dom].correct += 1;
-    });
-
-    return Object.entries(domains).map(([name, stats]) => ({
-      name,
-      percentage: Math.round((stats.correct / stats.total) * 100),
-      count: stats.total
-    }));
-  };
-
   const getUniqueErrors = () => {
     // Get distinct questions that were answered incorrectly at least once
     // We use a Map to keep the LAST failed attempt or just unique questions
@@ -262,30 +245,8 @@ const App: React.FC = () => {
                 </div>
              </div>
 
-             {/* Domain Breakdown */}
-             <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <BarChart2 className="text-brand-guinda" size={20} />
-                    Desempeño por Dominio
-                </h3>
-                <div className="space-y-4">
-                    {getDomainBreakdown().map((domain, idx) => (
-                        <div key={idx}>
-                            <div className="flex justify-between text-sm mb-1">
-                                <span className="font-medium text-slate-700 truncate w-3/4">{domain.name}</span>
-                                <span className="font-bold text-slate-900">{domain.percentage}%</span>
-                            </div>
-                            <div className="w-full bg-slate-100 rounded-full h-2.5">
-                                <div 
-                                    className={`h-2.5 rounded-full ${domain.percentage >= 80 ? 'bg-green-500' : domain.percentage >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`} 
-                                    style={{ width: `${domain.percentage}%` }}
-                                ></div>
-                            </div>
-                        </div>
-                    ))}
-                    {getDomainBreakdown().length === 0 && <p className="text-slate-400 text-sm">No hay suficientes datos aún.</p>}
-                </div>
-             </div>
+             {/* Domain Breakdown (New Component) */}
+             <DomainResults history={score.history} />
 
              {/* Detailed Error Report */}
              <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
