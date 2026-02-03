@@ -16,11 +16,16 @@ export interface Question {
 
 export type GameState = 'start' | 'playing' | 'summary';
 
+// New interface to track every interaction for analytics
+export interface Attempt {
+  question: Question;
+  selectedOptionId: string;
+  isCorrect: boolean;
+  timestamp: number;
+}
+
 export interface ScoreState {
   correct: number;
   incorrect: number;
-  history: {
-    questionIndex: number;
-    isCorrect: boolean;
-  }[];
+  history: Attempt[];
 }

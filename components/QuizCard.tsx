@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Timer } from 'lucide-react';
+import { Timer, Layers } from 'lucide-react';
 import { Question } from '../types';
 import ProgressBar from './ProgressBar';
 import FeedbackCard from './FeedbackCard';
@@ -7,11 +7,11 @@ import { QUESTIONS_DURATION_SEC } from '../constants';
 
 interface QuizCardProps {
   question: Question;
-  onAnswer: (isCorrect: boolean) => void;
-  onNext: () => void;
+  onAnswer: (isCorrect: boolean, selectedOptionId: string) => void;
+  onNext: (wasLastAnswerCorrect: boolean) => void;
   onFinish: () => void;
   questionNumber: number;
-  totalQuestions: number;
+  queueLength: number;
 }
 
 const QuizCard: React.FC<QuizCardProps> = ({ 
@@ -19,11 +19,12 @@ const QuizCard: React.FC<QuizCardProps> = ({
   onAnswer, 
   onNext,
   onFinish,
-  questionNumber, 
-  totalQuestions 
+  questionNumber,
+  queueLength
 }) => {
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
   const [timeLeft, setTimeLeft] = useState(QUESTIONS_DURATION_SEC);
 
   // Timer Logic
@@ -45,27 +46,30 @@ const QuizCard: React.FC<QuizCardProps> = ({
   const handleTimeOut = () => {
     if (!isAnswered) {
       setIsAnswered(true);
-      setSelectedOptionId('TIMEOUT'); // Special ID for timeout
-      onAnswer(false);
+      setIsCorrect(false);
+      setSelectedOptionId('TIMEOUT'); 
+      onAnswer(false, 'TIMEOUT');
     }
   };
 
-  const handleOptionClick = (id: string, isCorrect: boolean) => {
+  const handleOptionClick = (id: string, correct: boolean) => {
     if (isAnswered) return;
     
     setSelectedOptionId(id);
     setIsAnswered(true);
-    onAnswer(isCorrect);
+    setIsCorrect(correct);
+    onAnswer(correct, id);
   };
 
   // Reset state when question changes
   useEffect(() => {
     setSelectedOptionId(null);
     setIsAnswered(false);
+    setIsCorrect(false);
     setTimeLeft(QUESTIONS_DURATION_SEC);
   }, [question]);
 
-  const getOptionStyles = (optionId: string, isCorrect: boolean) => {
+  const getOptionStyles = (optionId: string, correct: boolean) => {
     const baseStyle = "w-full p-4 text-left border rounded-lg transition-all duration-200 flex items-start gap-3 group";
     
     if (!isAnswered) {
@@ -73,13 +77,13 @@ const QuizCard: React.FC<QuizCardProps> = ({
     }
 
     if (optionId === selectedOptionId) {
-      return isCorrect 
+      return correct 
         ? `${baseStyle} bg-green-50 border-green-500 ring-1 ring-green-500`
         : `${baseStyle} bg-red-50 border-red-500 ring-1 ring-red-500`;
     }
 
     // Show the correct answer if user picked wrong
-    if (isCorrect && selectedOptionId !== optionId) {
+    if (correct && selectedOptionId !== optionId) {
       return `${baseStyle} bg-green-50 border-green-500 border-dashed opacity-80`;
     }
 
@@ -103,11 +107,13 @@ const QuizCard: React.FC<QuizCardProps> = ({
                 {question.pregunta}
               </h2>
             </div>
-            <div className="flex items-center gap-1 text-slate-400 font-mono text-sm shrink-0 ml-4">
-              <Timer size={16} />
-              <span className={`${timeLeft < 10 ? 'text-red-500 font-bold' : ''}`}>
-                {timeLeft}s
-              </span>
+            <div className="flex flex-col items-end gap-2 ml-4 shrink-0">
+                <div className="flex items-center gap-1 text-slate-400 font-mono text-sm">
+                <Timer size={16} />
+                <span className={`${timeLeft < 10 ? 'text-red-500 font-bold' : ''}`}>
+                    {timeLeft}s
+                </span>
+                </div>
             </div>
           </div>
 
@@ -135,8 +141,12 @@ const QuizCard: React.FC<QuizCardProps> = ({
             ))}
           </div>
           
-          <div className="mt-4 text-right text-xs text-slate-400 font-medium">
-            Pregunta #{questionNumber}
+          <div className="mt-6 flex justify-between items-center text-xs text-slate-400 font-medium border-t border-slate-100 pt-4">
+            <div className="flex items-center gap-1">
+                <Layers size={14} />
+                <span>Pendientes en cola: {queueLength}</span>
+            </div>
+            <div>Pregunta Acumulada #{questionNumber}</div>
           </div>
         </div>
       </div>
@@ -146,9 +156,9 @@ const QuizCard: React.FC<QuizCardProps> = ({
         <FeedbackCard 
           question={question}
           selectedOptionId={selectedOptionId}
-          onNext={onNext}
+          onNext={() => onNext(isCorrect)}
           onFinish={onFinish}
-          isLastQuestion={questionNumber === totalQuestions}
+          isLastQuestion={queueLength === 0}
         />
       )}
     </div>
