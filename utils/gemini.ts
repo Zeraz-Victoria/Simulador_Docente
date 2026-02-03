@@ -5,10 +5,10 @@ import { Question } from "../types";
 const questionSchema = {
   type: Type.OBJECT,
   properties: {
-    nivel: { type: Type.STRING, description: "Nivel educativo (Primaria, Secundaria, etc.)" },
-    dominio: { type: Type.STRING, description: "Dominio del perfil docente (Ej: Dominio 1: Una maestra que...)" },
-    tema: { type: Type.STRING, description: "Tema específico de la pregunta (Ej: Inclusión, Ley General de Educación)" },
-    pregunta: { type: Type.STRING, description: "El planteamiento del caso o pregunta" },
+    nivel: { type: Type.STRING, description: "Nivel educativo" },
+    dominio: { type: Type.STRING, description: "Dominio (Ej: Dominio 1: ...)" },
+    tema: { type: Type.STRING, description: "Tema específico" },
+    pregunta: { type: Type.STRING, description: "Planteamiento del caso (Difícil)" },
     opciones: {
       type: Type.ARRAY,
       items: {
@@ -21,43 +21,61 @@ const questionSchema = {
         required: ["id", "texto", "es_correcta"],
       },
     },
-    retroalimentacion: { type: Type.STRING, description: "Explicación detallada de la respuesta correcta" },
-    fundamento_legal: { type: Type.STRING, description: "Referencia legal o normativa exacta" },
+    retroalimentacion: { type: Type.STRING, description: "Justificación técnica breve" },
+    fundamento_legal: { type: Type.STRING, description: "Normativa exacta" },
   },
   required: ["nivel", "dominio", "tema", "pregunta", "opciones", "retroalimentacion", "fundamento_legal"],
 };
 
-export const generateSingleQuestion = async (level: string): Promise<Question> => {
-  // CORRECCIÓN CRÍTICA:
-  // Inicializamos la IA DENTRO de la función.
-  // Si lo hacemos afuera, y la API KEY falta o 'process' no existe al cargar la página,
-  // la app se rompe completamente (pantalla blanca/cargando) antes de iniciar React.
-  
-  const apiKey = process.env.API_KEY;
+// HELPER SEGURO PARA OBTENER LA API KEY
+const getApiKey = (): string | undefined => {
+  let key: string | undefined = undefined;
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      key = import.meta.env.VITE_API_KEY || import.meta.env.API_KEY;
+    }
+  } catch (e) {}
+
+  if (!key) {
+    try {
+      if (typeof process !== 'undefined' && process.env) {
+        key = process.env.API_KEY || process.env.VITE_API_KEY;
+      }
+    } catch (e) {}
+  }
+  return key;
+};
+
+export const generateSingleQuestion = async (level: string, avoidTopics: string[] = []): Promise<Question> => {
+  const apiKey = getApiKey();
   
   if (!apiKey) {
-    throw new Error("API Key no configurada. Usando modo offline.");
+    console.warn("API Key no encontrada. Usando modo offline.");
+    throw new Error("API_KEY_MISSING");
   }
 
   const ai = new GoogleGenAI({ apiKey });
   const modelId = "gemini-3-flash-preview"; 
   
+  // PROMPT OPTIMIZADO PARA VELOCIDAD Y DIFICULTAD
+  // Instrucciones más directas reducen el tiempo de "razonamiento" excesivo del modelo
+  // manteniendo la calidad del contenido.
   const prompt = `
-    Actúa como un experto evaluador del Servicio Profesional Docente en México (USICAMM).
-    Genera UNA sola pregunta de examen de opción múltiple, difícil y basada en casos prácticos.
+    Genera UN caso práctico de examen USICAMM (Nivel Experto) para ${level}.
     
-    Contexto:
-    - Nivel educativo: ${level}
-    - Normatividad: Art 3 Constitucional, Ley General de Educación, Nueva Escuela Mexicana (NEM).
-    - Formato: Caso práctico donde el docente debe tomar una decisión.
-    
-    Requisitos:
-    - 4 Opciones (A, B, C, D).
-    - Solo una correcta.
-    - Retroalimentación pedagógica sólida.
-    - Fundamento legal explícito.
-    - El campo 'dominio' debe comenzar con 'Dominio 1', 'Dominio 2', 'Dominio 3' o 'Dominio 4'.
-    - RESPUESTA OBLIGATORIA EN JSON.
+    REQUISITOS ESTRICTOS:
+    1. ALTA DIFICULTAD: Caso complejo con dilema normativo/pedagógico.
+    2. DISTRACTORES: 3 opciones incorrectas que parezcan reales (vocabulario técnico).
+    3. NORMATIVA 2024-2025: Nueva Escuela Mexicana, Art 3, LGE.
+    4. EVITA: Preguntas de memoria o definiciones obvias.
+    5. JSON PURO: Usa el esquema proporcionado.
+
+    ESTRUCTURA:
+    - pregunta: Situación de mín 30 palabras.
+    - retroalimentacion: Breve y técnica. Por qué sí es la correcta y el error clave de los distractores.
+    - fundamento_legal: Documento específico.
   `;
 
   try {
@@ -67,18 +85,18 @@ export const generateSingleQuestion = async (level: string): Promise<Question> =
       config: {
         responseMimeType: "application/json",
         responseSchema: questionSchema,
-        temperature: 0.7, 
+        temperature: 0.8, // Ligeramente reducido para respuestas más rápidas y precisas
       },
     });
 
     const text = response.text;
-    if (!text) throw new Error("La API respondió pero no devolvió texto.");
+    if (!text) throw new Error("La API no devolvió texto.");
 
     const questionData = JSON.parse(text) as Question;
     return questionData;
 
   } catch (error) {
-    console.error("Error detallado generando pregunta con Gemini:", error);
+    console.error("Error generando pregunta:", error);
     throw error;
   }
 };

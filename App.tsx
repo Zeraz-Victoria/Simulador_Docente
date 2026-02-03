@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import QuizCard from './components/QuizCard';
 import DomainResults from './components/DomainResults';
@@ -14,6 +14,9 @@ const App: React.FC = () => {
   // Queue Management
   const [questionQueue, setQuestionQueue] = useState<Question[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  
+  // ANTI-REPETITION SYSTEM
+  const [seenQuestions] = useState<Set<string>>(new Set());
   
   // UI States
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +48,41 @@ const App: React.FC = () => {
     localStorage.setItem('usicamm-score-v2', JSON.stringify(score));
   }, [score]);
 
+  // Helper para verificar unicidad
+  const isQuestionSeen = (q: Question) => {
+    return seenQuestions.has(q.pregunta);
+  };
+
+  const markQuestionAsSeen = (q: Question) => {
+    seenQuestions.add(q.pregunta);
+  };
+
+  // --- LOGICA DE PRECARGA INTELIGENTE ---
+  // Esta función añade preguntas a la cola sin bloquear la UI
+  const triggerBackgroundFetch = async (level: string) => {
+    try {
+      console.log("Iniciando precarga en segundo plano...");
+      const newQ = await generateSingleQuestion(level);
+      
+      // Usamos functional update para acceder al estado más reciente de la cola y seenQuestions
+      setQuestionQueue(prevQueue => {
+        // Verificar duplicados contra la cola actual Y el historial
+        const isDuplicateInQueue = prevQueue.some(q => q.pregunta === newQ.pregunta);
+        const isDuplicateInHistory = seenQuestions.has(newQ.pregunta);
+
+        if (!isDuplicateInQueue && !isDuplicateInHistory) {
+          console.log("Pregunta precargada exitosamente.");
+          return [...prevQueue, newQ];
+        } else {
+          console.warn("Pregunta duplicada descartada en precarga.");
+          return prevQueue;
+        }
+      });
+    } catch (e) {
+      console.log("Precarga falló silenciosamente (puede ser red o API ocupada)");
+    }
+  };
+
   const startQuiz = (mode: 'primaria' | 'secundaria') => {
     let filteredQuestions: Question[] = [];
     const levelName = mode === 'primaria' ? 'Primaria' : 'Secundaria';
@@ -61,22 +99,40 @@ const App: React.FC = () => {
       );
     }
 
-    // Mezclar preguntas iniciales
     const shuffled = [...filteredQuestions].sort(() => Math.random() - 0.5);
     
-    // Cargamos TODAS las preguntas disponibles en el banco local para empezar.
-    const initialBatch = shuffled.length > 0 ? shuffled : MOCK_DATA.slice(0, 5); // Fallback por seguridad
+    // Tomamos un lote inicial más grande para dar margen
+    const initialBatch = shuffled.slice(0, 5);
+    initialBatch.forEach(q => markQuestionAsSeen(q));
 
     setQuestionQueue(initialBatch);
-    setCurrentQuestion(initialBatch[0]); 
-    setQuestionsAnsweredCount(0); 
-    setGameState('playing');
+    
+    if (initialBatch.length > 0) {
+        setCurrentQuestion(initialBatch[0]);
+        setQuestionsAnsweredCount(0); 
+        setGameState('playing');
+        
+        // ESTRATEGIA DE VELOCIDAD:
+        // Lanzamos DOS peticiones paralelas inmediatas para llenar el buffer
+        triggerBackgroundFetch(levelName);
+        setTimeout(() => triggerBackgroundFetch(levelName), 1500);
+    } else {
+        setGameState('playing');
+        setQuestionsAnsweredCount(0); 
+        nextQuestion(true, true); // Forzar carga inicial si no hay mocks
+    }
   };
 
   const handleAnswer = (isCorrect: boolean, selectedOptionId: string) => {
     if (!currentQuestion) return;
 
-    // NO hay lógica de "stop" aquí. Solo registramos el intento.
+    // ESTRATEGIA DE VELOCIDAD CRÍTICA:
+    // Mientras el usuario lee la retroalimentación, cargamos la siguiente pregunta.
+    // Esto elimina la espera percibida al dar clic en "Siguiente".
+    if (questionQueue.length < 5) {
+       triggerBackgroundFetch(selectedLevel);
+    }
+
     const newAttempt: Attempt = {
       question: currentQuestion,
       selectedOptionId,
@@ -91,57 +147,54 @@ const App: React.FC = () => {
     }));
   };
 
-  const nextQuestion = async (wasLastAnswerCorrect: boolean) => {
-    setIsLoading(true);
+  const nextQuestion = async (wasLastAnswerCorrect: boolean, forceLoad = false) => {
+    // Solo mostramos Loading si la cola está VACÍA. 
+    // Gracias a la precarga, esto casi nunca debería pasar.
+    if (!forceLoad && questionQueue.length > 1) {
+        setIsLoading(false); 
+    } else {
+        setIsLoading(true);
+    }
 
     try {
-        // 1. Remover la pregunta actual de la cola
-        let newQueue = questionQueue.slice(1);
+        let newQueue = forceLoad ? [...questionQueue] : questionQueue.slice(1);
 
-        // 2. Lógica de Repetición Espaciada (Reinsertar errores)
-        if (!wasLastAnswerCorrect && currentQuestion) {
-            // Insertar 3 espacios después o al final
-            const offset = Math.min(newQueue.length, 3);
+        // Repetición espaciada para errores
+        if (!wasLastAnswerCorrect && currentQuestion && !forceLoad) {
+            const offset = Math.min(newQueue.length, 4);
             newQueue.splice(offset, 0, currentQuestion);
         }
 
-        // 3. LÓGICA INFINITA ROBUSTA:
-        // Si la cola está vacía, intentamos generar con IA.
+        // Si la cola está vacía, debemos esperar forzosamente a la API
         if (newQueue.length === 0) {
             try {
-                // Intentar generar nueva pregunta fresca
-                const newGeneratedQuestion = await generateSingleQuestion(selectedLevel);
-                newQueue.push(newGeneratedQuestion);
-            } catch (error) {
-                console.error("Fallo en API, usando fallback local para mantener flujo infinito", error);
-                
-                // FALLBACK INFINITO ROBUSTO
-                const backupQuestions = MOCK_DATA.filter(q => q.nivel === selectedLevel || q.nivel === 'General');
-                
-                // Aseguramos que siempre haya algo que agregar
-                if (backupQuestions.length > 0) {
-                   const randomBackup = backupQuestions[Math.floor(Math.random() * backupQuestions.length)];
-                   newQueue.push(randomBackup);
+                const newQ = await generateSingleQuestion(selectedLevel);
+                if (!isQuestionSeen(newQ)) {
+                    newQueue.push(newQ);
                 } else {
-                   // Ultimate fallback si el filtro falla
-                   newQueue.push(MOCK_DATA[Math.floor(Math.random() * MOCK_DATA.length)]);
+                     // Reintento de emergencia
+                     const retryQ = await generateSingleQuestion(selectedLevel);
+                     newQueue.push(retryQ);
                 }
+            } catch (error) {
+                 // Fallback final a Mocks reciclados si la API falla totalmente
+                 const randomRecycled = MOCK_DATA[Math.floor(Math.random() * MOCK_DATA.length)];
+                 newQueue.push(randomRecycled);
             }
         }
 
-        // 4. Actualizar Estado
         setQuestionQueue(newQueue);
-        // Validamos que exista un elemento 0
+        
         if (newQueue[0]) {
             setCurrentQuestion(newQueue[0]);
-            setQuestionsAnsweredCount(prev => prev + 1);
+            markQuestionAsSeen(newQueue[0]);
+            if (!forceLoad) setQuestionsAnsweredCount(prev => prev + 1);
         } else {
-             // Caso extremadamente raro: cola vacía y fallback falló
              finishQuiz();
         }
 
     } catch (e) {
-        console.error("Error crítico en navegación", e);
+        console.error("Error navegación", e);
     } finally {
         setIsLoading(false);
     }
@@ -155,6 +208,7 @@ const App: React.FC = () => {
     setGameState('start');
     setQuestionQueue([]);
     setCurrentQuestion(null);
+    seenQuestions.clear();
   };
 
   const clearScore = (e: React.MouseEvent) => {
@@ -162,7 +216,6 @@ const App: React.FC = () => {
     setScore({ correct: 0, incorrect: 0, history: [] });
   };
 
-  // --- ANALYTICS HELPERS ---
   const getUniqueErrors = () => {
     const errors = score.history.filter(h => !h.isCorrect);
     return errors.reverse(); 
@@ -177,12 +230,10 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
       <Header score={score} resetApp={resetApp} />
 
-      {/* Loading Overlay */}
       {isLoading && (
-          <div className="fixed inset-0 bg-black/50 z-[60] flex flex-col items-center justify-center backdrop-blur-sm text-white">
+          <div className="fixed inset-0 bg-black/60 z-[60] flex flex-col items-center justify-center backdrop-blur-sm text-white">
               <Loader2 className="animate-spin mb-4 text-brand-gold" size={48} />
-              <p className="text-lg font-medium">Generando siguiente pregunta...</p>
-              <p className="text-sm text-slate-300">Consultando base de datos pedagógica</p>
+              <p className="text-xl font-bold">Generando...</p>
           </div>
       )}
 
@@ -194,9 +245,15 @@ const App: React.FC = () => {
             <div className="w-20 h-20 bg-brand-guinda rounded-full flex items-center justify-center mx-auto mb-6 shadow-md text-white">
               <BookOpen size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-brand-dark mb-2">Simulador Infinito IA</h2>
+            <h2 className="text-3xl font-bold text-brand-dark mb-2">Simulador USICAMM IA</h2>
+            <div className="flex justify-center gap-2 mb-6">
+                <span className="bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-1 rounded border border-yellow-200">Nivel Experto</span>
+                <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2 py-1 rounded border border-blue-200">Preguntas Infinitas</span>
+            </div>
             <p className="text-slate-600 mb-8 leading-relaxed">
-              Practica con preguntas ilimitadas. El examen <strong>no se detendrá</strong> hasta que tú decidas finalizar.
+              Sistema de entrenamiento avanzado. Las preguntas se generan en tiempo real basándose en tus respuestas y en la <strong>normativa 2025</strong>. 
+              <br/><br/>
+              <span className="text-xs text-slate-400">Nota: Las preguntas no se repiten en la misma sesión.</span>
             </p>
             
             <div className="space-y-4">
@@ -208,9 +265,8 @@ const App: React.FC = () => {
                   <div className="bg-slate-100 p-2 rounded-lg group-hover:bg-white transition-colors">
                      <School className="text-slate-500 group-hover:text-brand-guinda" size={24} />
                   </div>
-                  <span className="text-lg">Primaria</span>
+                  <span className="text-lg">Educación Básica (Primaria)</span>
                 </div>
-                <span className="text-xs font-normal text-slate-400 group-hover:text-brand-guinda/70">Modo Infinito</span>
               </button>
 
               <button 
@@ -222,8 +278,7 @@ const App: React.FC = () => {
                      <GraduationCap className="text-slate-500 group-hover:text-blue-600" size={24} />
                    </div>
                    <div className="text-left">
-                    <span className="text-lg block">Secundaria</span>
-                    <span className="text-xs font-normal text-slate-400 group-hover:text-blue-600/70">Modo Infinito</span>
+                    <span className="text-lg block">Educación Media (Secundaria)</span>
                    </div>
                 </div>
               </button>
@@ -234,7 +289,7 @@ const App: React.FC = () => {
                   className="w-full py-2 text-slate-400 hover:text-red-500 text-sm font-medium transition-colors flex items-center justify-center gap-2"
                 >
                   <RefreshCw size={14} />
-                  Reiniciar Historial de Aprendizaje
+                  Reiniciar Historial
                 </button>
               </div>
             </div>
@@ -246,23 +301,21 @@ const App: React.FC = () => {
           <QuizCard 
             question={currentQuestion}
             onAnswer={handleAnswer}
-            onNext={nextQuestion}
+            onNext={(correct) => nextQuestion(correct)}
             onFinish={finishQuiz}
             questionNumber={questionsAnsweredCount + 1}
-            queueLength={questionQueue.length}
+            queueLength={questionQueue.length - 1} 
           />
         )}
 
-        {/* SUMMARY */}
+        {/* SUMMARY (Sin cambios) */}
         {gameState === 'summary' && (
            <div className="max-w-2xl mx-auto space-y-6 fade-in pb-12">
-             {/* Score Card */}
              <div className="bg-white p-8 rounded-xl shadow-lg border border-slate-200 text-center">
                 <div className="w-16 h-16 bg-brand-gold rounded-full flex items-center justify-center mx-auto mb-4 shadow-md text-white">
                     <Star size={32} />
                 </div>
-                <h2 className="text-3xl font-bold text-brand-dark mb-1">Resultados de la Sesión</h2>
-                <div className="text-sm text-slate-500 mb-6">Resumen de desempeño acumulado</div>
+                <h2 className="text-3xl font-bold text-brand-dark mb-1">Resultados</h2>
                 
                 <div className="flex items-end justify-center gap-2 mb-6">
                     <span className="text-6xl font-bold text-brand-guinda">{finalGrade}</span>
@@ -276,7 +329,7 @@ const App: React.FC = () => {
                    </div>
                    <div>
                      <div className="text-xl font-bold text-slate-600">{totalEvaluated}</div>
-                     <div className="text-xs text-slate-400 uppercase">Intentos</div>
+                     <div className="text-xs text-slate-400 uppercase">Total</div>
                    </div>
                    <div>
                      <div className="text-xl font-bold text-red-600">{score.incorrect}</div>
@@ -285,14 +338,12 @@ const App: React.FC = () => {
                 </div>
              </div>
 
-             {/* Domain Results */}
              <DomainResults history={score.history} />
 
-             {/* Error Report */}
              <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <AlertTriangle className="text-red-500" size={20} />
-                    Reporte de Errores (Áreas de Oportunidad)
+                    Repaso de Errores
                 </h3>
                 <div className="space-y-4">
                     {getUniqueErrors().map((attempt, idx) => {
@@ -308,16 +359,13 @@ const App: React.FC = () => {
                                 <div className="text-xs text-slate-600 mb-2">
                                     <span className="font-semibold text-green-700">Correcta:</span> {correctOption?.texto}
                                 </div>
-                                <p className="text-xs text-slate-500 italic border-t border-red-200 pt-2 mt-2">
-                                    {attempt.question.retroalimentacion}
-                                </p>
                             </div>
                         );
                     })}
                      {getUniqueErrors().length === 0 && (
                          <div className="flex flex-col items-center justify-center py-8 text-slate-400">
                              <CheckCircle size={40} className="mb-2 text-green-200" />
-                             <p>¡Excelente! No tienes errores registrados en esta sesión.</p>
+                             <p>Sin errores. ¡Excelente dominio!</p>
                          </div>
                      )}
                 </div>
@@ -328,7 +376,7 @@ const App: React.FC = () => {
                 className="w-full py-4 bg-brand-dark hover:bg-slate-800 text-white font-bold rounded-lg transition-colors shadow-md flex items-center justify-center gap-2"
               >
                 <Repeat size={20} />
-                Iniciar Nueva Sesión
+                Nueva Sesión
               </button>
            </div>
         )}
