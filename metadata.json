@@ -1,0 +1,5 @@
+{
+  "name": "Simulador Docente MX",
+  "description": "Plataforma de simulación de exámenes para el Servicio Profesional Docente (USICAMM/CENEVAL) con retroalimentación en tiempo real y fundamentación legal.",
+  "requestFramePermissions": []
+}
