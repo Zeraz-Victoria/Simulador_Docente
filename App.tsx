@@ -4,14 +4,19 @@ import QuizCard from './components/QuizCard';
 import DomainResults from './components/DomainResults';
 import { GameState, ScoreState, Question, Attempt } from './types';
 import { MOCK_DATA } from './constants';
-import { BookOpen, RefreshCw, School, GraduationCap, Star, AlertTriangle, CheckCircle, Repeat } from 'lucide-react';
+import { generateSingleQuestion } from './utils/gemini';
+import { BookOpen, RefreshCw, School, GraduationCap, Star, AlertTriangle, CheckCircle, Repeat, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>('start');
+  const [selectedLevel, setSelectedLevel] = useState<string>('General');
   
-  // Queue Management for Spaced Repetition
+  // Queue Management
   const [questionQueue, setQuestionQueue] = useState<Question[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  
+  // UI States
+  const [isLoading, setIsLoading] = useState(false);
   
   // Counters
   const [questionsAnsweredCount, setQuestionsAnsweredCount] = useState(0);
@@ -42,7 +47,10 @@ const App: React.FC = () => {
 
   const startQuiz = (mode: 'primaria' | 'secundaria') => {
     let filteredQuestions: Question[] = [];
+    const levelName = mode === 'primaria' ? 'Primaria' : 'Secundaria';
+    setSelectedLevel(levelName);
 
+    // Initial Seed from MOCK_DATA
     if (mode === 'primaria') {
       filteredQuestions = MOCK_DATA.filter(q => 
         q.nivel === 'Primaria' || q.nivel === 'General'
@@ -53,24 +61,22 @@ const App: React.FC = () => {
       );
     }
 
-    if (filteredQuestions.length === 0) {
-      alert('No hay preguntas disponibles.');
-      return;
-    }
-
-    // Shuffle initial deck
+    // Mezclar preguntas iniciales
     const shuffled = [...filteredQuestions].sort(() => Math.random() - 0.5);
+    
+    // Cargamos TODAS las preguntas disponibles en el banco local para empezar.
+    const initialBatch = shuffled.length > 0 ? shuffled : MOCK_DATA.slice(0, 5); // Fallback por seguridad
 
-    setQuestionQueue(shuffled);
-    setCurrentQuestion(shuffled[0]); // Set first question
-    setQuestionsAnsweredCount(0); // Reset session counter
+    setQuestionQueue(initialBatch);
+    setCurrentQuestion(initialBatch[0]); 
+    setQuestionsAnsweredCount(0); 
     setGameState('playing');
   };
 
   const handleAnswer = (isCorrect: boolean, selectedOptionId: string) => {
     if (!currentQuestion) return;
 
-    // Log the attempt
+    // NO hay lógica de "stop" aquí. Solo registramos el intento.
     const newAttempt: Attempt = {
       question: currentQuestion,
       selectedOptionId,
@@ -85,31 +91,60 @@ const App: React.FC = () => {
     }));
   };
 
-  const nextQuestion = (wasLastAnswerCorrect: boolean) => {
-    // 1. Remove the current question from the front of the queue
-    let newQueue = questionQueue.slice(1);
+  const nextQuestion = async (wasLastAnswerCorrect: boolean) => {
+    setIsLoading(true);
 
-    // 2. SPACED REPETITION LOGIC
-    // If incorrect, re-insert the current question into the queue
-    if (!wasLastAnswerCorrect && currentQuestion) {
-      // Determine re-insertion index: randomly between 3 and 5 spots later, 
-      // or at the end if queue is short.
-      const offset = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 3);
-      
-      // We insert a copy to ensure it appears again
-      newQueue.splice(offset, 0, currentQuestion);
+    try {
+        // 1. Remover la pregunta actual de la cola
+        let newQueue = questionQueue.slice(1);
+
+        // 2. Lógica de Repetición Espaciada (Reinsertar errores)
+        if (!wasLastAnswerCorrect && currentQuestion) {
+            // Insertar 3 espacios después o al final
+            const offset = Math.min(newQueue.length, 3);
+            newQueue.splice(offset, 0, currentQuestion);
+        }
+
+        // 3. LÓGICA INFINITA ROBUSTA:
+        // Si la cola está vacía, intentamos generar con IA.
+        if (newQueue.length === 0) {
+            try {
+                // Intentar generar nueva pregunta fresca
+                const newGeneratedQuestion = await generateSingleQuestion(selectedLevel);
+                newQueue.push(newGeneratedQuestion);
+            } catch (error) {
+                console.error("Fallo en API, usando fallback local para mantener flujo infinito", error);
+                
+                // FALLBACK INFINITO ROBUSTO
+                const backupQuestions = MOCK_DATA.filter(q => q.nivel === selectedLevel || q.nivel === 'General');
+                
+                // Aseguramos que siempre haya algo que agregar
+                if (backupQuestions.length > 0) {
+                   const randomBackup = backupQuestions[Math.floor(Math.random() * backupQuestions.length)];
+                   newQueue.push(randomBackup);
+                } else {
+                   // Ultimate fallback si el filtro falla
+                   newQueue.push(MOCK_DATA[Math.floor(Math.random() * MOCK_DATA.length)]);
+                }
+            }
+        }
+
+        // 4. Actualizar Estado
+        setQuestionQueue(newQueue);
+        // Validamos que exista un elemento 0
+        if (newQueue[0]) {
+            setCurrentQuestion(newQueue[0]);
+            setQuestionsAnsweredCount(prev => prev + 1);
+        } else {
+             // Caso extremadamente raro: cola vacía y fallback falló
+             finishQuiz();
+        }
+
+    } catch (e) {
+        console.error("Error crítico en navegación", e);
+    } finally {
+        setIsLoading(false);
     }
-
-    // 3. Check if queue is empty (Mastery achieved)
-    if (newQueue.length === 0) {
-      finishQuiz();
-      return;
-    }
-
-    // 4. Update State
-    setQuestionQueue(newQueue);
-    setCurrentQuestion(newQueue[0]);
-    setQuestionsAnsweredCount(prev => prev + 1);
   };
 
   const finishQuiz = () => {
@@ -128,12 +163,9 @@ const App: React.FC = () => {
   };
 
   // --- ANALYTICS HELPERS ---
-
   const getUniqueErrors = () => {
-    // Get distinct questions that were answered incorrectly at least once
-    // We use a Map to keep the LAST failed attempt or just unique questions
     const errors = score.history.filter(h => !h.isCorrect);
-    return errors.reverse(); // Show most recent errors first
+    return errors.reverse(); 
   };
 
   const totalEvaluated = score.correct + score.incorrect;
@@ -145,6 +177,15 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
       <Header score={score} resetApp={resetApp} />
 
+      {/* Loading Overlay */}
+      {isLoading && (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex flex-col items-center justify-center backdrop-blur-sm text-white">
+              <Loader2 className="animate-spin mb-4 text-brand-gold" size={48} />
+              <p className="text-lg font-medium">Generando siguiente pregunta...</p>
+              <p className="text-sm text-slate-300">Consultando base de datos pedagógica</p>
+          </div>
+      )}
+
       <main className="container mx-auto px-4 py-8">
         
         {/* START SCREEN */}
@@ -153,9 +194,9 @@ const App: React.FC = () => {
             <div className="w-20 h-20 bg-brand-guinda rounded-full flex items-center justify-center mx-auto mb-6 shadow-md text-white">
               <BookOpen size={40} />
             </div>
-            <h2 className="text-3xl font-bold text-brand-dark mb-2">Modo Estudio Adaptativo</h2>
+            <h2 className="text-3xl font-bold text-brand-dark mb-2">Simulador Infinito IA</h2>
             <p className="text-slate-600 mb-8 leading-relaxed">
-              El examen no termina hasta que tú decidas. Las preguntas que falles volverán a aparecer (Repetición Espaciada) para asegurar tu aprendizaje.
+              Practica con preguntas ilimitadas. El examen <strong>no se detendrá</strong> hasta que tú decidas finalizar.
             </p>
             
             <div className="space-y-4">
@@ -169,7 +210,7 @@ const App: React.FC = () => {
                   </div>
                   <span className="text-lg">Primaria</span>
                 </div>
-                <span className="text-xs font-normal text-slate-400 group-hover:text-brand-guinda/70">NEM y Normatividad</span>
+                <span className="text-xs font-normal text-slate-400 group-hover:text-brand-guinda/70">Modo Infinito</span>
               </button>
 
               <button 
@@ -182,7 +223,7 @@ const App: React.FC = () => {
                    </div>
                    <div className="text-left">
                     <span className="text-lg block">Secundaria</span>
-                    <span className="text-xs font-normal text-slate-400 group-hover:text-blue-600/70">Incluye Telesecundaria</span>
+                    <span className="text-xs font-normal text-slate-400 group-hover:text-blue-600/70">Modo Infinito</span>
                    </div>
                 </div>
               </button>
@@ -212,11 +253,10 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* SUMMARY & ANALYTICS */}
+        {/* SUMMARY */}
         {gameState === 'summary' && (
            <div className="max-w-2xl mx-auto space-y-6 fade-in pb-12">
-             
-             {/* Main Score Card */}
+             {/* Score Card */}
              <div className="bg-white p-8 rounded-xl shadow-lg border border-slate-200 text-center">
                 <div className="w-16 h-16 bg-brand-gold rounded-full flex items-center justify-center mx-auto mb-4 shadow-md text-white">
                     <Star size={32} />
@@ -245,10 +285,10 @@ const App: React.FC = () => {
                 </div>
              </div>
 
-             {/* Domain Breakdown (New Component) */}
+             {/* Domain Results */}
              <DomainResults history={score.history} />
 
-             {/* Detailed Error Report */}
+             {/* Error Report */}
              <div className="bg-white p-6 rounded-xl shadow-md border border-slate-200">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <AlertTriangle className="text-red-500" size={20} />
@@ -290,7 +330,6 @@ const App: React.FC = () => {
                 <Repeat size={20} />
                 Iniciar Nueva Sesión
               </button>
-
            </div>
         )}
       </main>

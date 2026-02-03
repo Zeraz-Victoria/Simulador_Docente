@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, CheckCircle, XCircle, Scale, ArrowRight, Flag } from 'lucide-react';
+import { BookOpen, CheckCircle, XCircle, Scale, ArrowRight, Flag, Sparkles } from 'lucide-react';
 import { Question, Option } from '../types';
 
 interface FeedbackCardProps {
@@ -7,15 +7,14 @@ interface FeedbackCardProps {
   selectedOptionId: string | null;
   onNext: () => void;
   onFinish: () => void;
-  isLastQuestion: boolean;
+  isLastQuestion: boolean; // Kept for interface compatibility but logic changed for infinite mode
 }
 
 const FeedbackCard: React.FC<FeedbackCardProps> = ({ 
   question, 
   selectedOptionId, 
   onNext, 
-  onFinish,
-  isLastQuestion 
+  onFinish
 }) => {
   const isCorrect = question.opciones.find(o => o.id === selectedOptionId)?.es_correcta;
   const correctOption = question.opciones.find(o => o.es_correcta);
@@ -68,28 +67,25 @@ const FeedbackCard: React.FC<FeedbackCardProps> = ({
            </span>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Infinite Mode Design */}
         <div className="flex flex-col sm:flex-row gap-4 pt-2">
-          {!isLastQuestion && (
-            <button
-              onClick={onNext}
-              className="flex-1 py-3 bg-brand-dark hover:bg-slate-800 text-white font-bold rounded-lg transition-colors shadow-md flex items-center justify-center gap-2"
-            >
-              <span>Siguiente Pregunta</span>
-              <ArrowRight size={18} />
-            </button>
-          )}
+          {/* Always show Next Button to trigger AI generation if needed */}
+          <button
+            onClick={onNext}
+            className="flex-1 py-3 bg-brand-dark hover:bg-slate-800 text-white font-bold rounded-lg transition-colors shadow-md flex items-center justify-center gap-2"
+          >
+            <span>Siguiente Pregunta</span>
+            <ArrowRight size={18} />
+            {/* Indicador sutil de que es infinito */}
+            <Sparkles size={14} className="text-brand-gold animate-pulse ml-1" />
+          </button>
           
           <button
             onClick={onFinish}
-            className={`flex-1 py-3 font-bold rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 border
-              ${isLastQuestion 
-                ? 'bg-brand-guinda hover:bg-red-900 text-white border-transparent' 
-                : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-300'
-              }`}
+            className="flex-1 py-3 font-bold rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 border bg-white hover:bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-300"
           >
             <Flag size={18} />
-            <span>{isLastQuestion ? 'Finalizar Examen' : 'Terminar y Evaluar'}</span>
+            <span>Terminar y Evaluar</span>
           </button>
         </div>
       </div>
