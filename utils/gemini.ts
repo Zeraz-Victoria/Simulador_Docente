@@ -1,10 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question } from "../types";
 
-// Inicialización segura del cliente con la API Key del entorno
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-// Esquema de respuesta estricto para asegurar que Gemini devuelva el JSON correcto
+// Esquema de respuesta estricto
 const questionSchema = {
   type: Type.OBJECT,
   properties: {
@@ -31,7 +28,18 @@ const questionSchema = {
 };
 
 export const generateSingleQuestion = async (level: string): Promise<Question> => {
-  // USO DEL MODELO RECOMENDADO: gemini-3-flash-preview para tareas de texto rápidas
+  // CORRECCIÓN CRÍTICA:
+  // Inicializamos la IA DENTRO de la función.
+  // Si lo hacemos afuera, y la API KEY falta o 'process' no existe al cargar la página,
+  // la app se rompe completamente (pantalla blanca/cargando) antes de iniciar React.
+  
+  const apiKey = process.env.API_KEY;
+  
+  if (!apiKey) {
+    throw new Error("API Key no configurada. Usando modo offline.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   const modelId = "gemini-3-flash-preview"; 
   
   const prompt = `
@@ -71,7 +79,6 @@ export const generateSingleQuestion = async (level: string): Promise<Question> =
 
   } catch (error) {
     console.error("Error detallado generando pregunta con Gemini:", error);
-    // Relanzamos el error para que App.tsx active el fallback
     throw error;
   }
 };
